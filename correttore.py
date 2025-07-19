@@ -5,94 +5,96 @@ la formattazione (a-capo compresi) e senza inserire newline extra.
 """
 
 import os
-import re
 import sys
+import difflib
+
 import ollama
-import pysbd
+import spacy
+from bs4 import BeautifulSoup
 
 # ─── Parametri ───────────────────────────────────────────────────────────────
-CHUNK_WORD_LIMIT   = 200          # parole totali (overlap incluso)
-OUTPUT_PERCENT     = 75
-OVERLAP_PERCENT    = (100 - OUTPUT_PERCENT) / 2  # 12,5 %
+CHUNK_CHARS_LIMIT  = 2500
+OUTPUT_PERCENT     = 50
+OVERLAP_PERCENT    = (100 - OUTPUT_PERCENT)  # 20 %
 MODEL_NAME         = "gemma3n"
 MISMATCH_THRESHOLD = 0.01         # 1 %
 # ─────────────────────────────────────────────────────────────────────────────
 
-def concat_strings(strings, max_length=1500):
-    """
-    Concatena un array di stringhe in stringhe di lunghezza massima specificata.
+nlp = spacy.blank("xx")  # lingua generica (multilingua)
+nlp.add_pipe("sentencizer")
 
-    Args:
-        strings (list): Lista di stringhe da concatenare.
-        max_length (int): Lunghezza massima delle stringhe concatenate. Default: 1500.
+def print_start_end(string, ratio):
+    print(f"{string[0:round(len(string)*ratio)]}…{string[-round(len(string)*ratio):round(len(string))]}")
 
-    Returns:
-        list: Lista di stringhe concatenate, ciascuna di lunghezza massima max_length.
-    """
-    result = []
-    current_concat = ""
+def chunk_sentences(string_list, chunk_word_limit, overlap_percent):
+    chunk_length = chunk_word_limit - (chunk_word_limit * overlap_percent / 100)
 
-    for string in strings:
-        # Se aggiungendo la stringa si supera il limite
-        if len(current_concat) + len(string) > max_length:
-            result.append(current_concat)  # Aggiungi la concatenazione corrente
-            current_concat = string       # Inizia una nuova concatenazione
+    chunks = []
+    current_chunk = []
+    current_length = 0
+    old_length = 0
+    
+    for s in string_list:
+        substring_list = [s.text for s in nlp(s).sents]
+        if len(substring_list) > 0:
+            substring_list[-1] += "\n"
         else:
-            current_concat += " " + string      # Continua a concatenare
+            substring_list = ["\n"]
+        for ss in substring_list:
+            corrected_len = len(ss) - ss.count("\n")
+            if corrected_len > (chunk_word_limit - chunk_length) / 2:
+                raise ValueError(f"String too long, increase CHUNK_CHARS_LIMIT: {ss} ({corrected_len} > {chunk_word_limit - chunk_length})")
 
-    if current_concat:  # Aggiungi l'ultimo blocco, se esiste
-        result.append(current_concat)
+            if current_length + corrected_len <= chunk_length:
+                current_chunk.append(ss)
+                current_length += corrected_len
+            else:
+                chunks.append(" ".join(current_chunk))
+                current_chunk = [ss]
+                old_length = current_length 
+                current_length = corrected_len
 
-    return result
+            if old_length <= chunk_word_limit and len(chunks) > 0:
+                chunks[-1] += f" {ss}"
+                old_length += corrected_len
 
-def tokenize(text):
-    seg = pysbd.Segmenter(language="en", clean=True)
-    blocks = seg.segment(text)
-    blocks = concat_strings(blocks, CHUNK_WORD_LIMIT)
-    return blocks
+    if len(current_chunk) > 0:
+        chunks.append(" ".join(current_chunk))
 
-def join(tokens):
-    return ''.join(tokens)
-
-def split_with_overlap(text, total_words, overlap_pct):
-    tok       = split_blocks(text, CHUNK_WORD_LIMIT)
-    overlap   = max(1, round(total_words * overlap_pct / 100))
-    step      = round(total_words * OUTPUT_PERCENT / 100)
-    chunks, ranges = [], []
-    i = 0
-    while i < len(tok):
-        start = max(i - overlap, 0)
-        end   = min(i + step + overlap, len(tok))
-        chunk_tokens = tok[start:end]
-        chunks.append(join(chunk_tokens))
-
-        out_start = overlap if start else 0
-        out_end   = len(chunk_tokens) - overlap if end != len(tok) else len(chunk_tokens)
-        ranges.append((out_start, out_end))
-        i += step
-    return chunks, ranges
+    return chunks
 
 def correct_chunk_with_ollama(chunk: str) -> str:
     prompt = (
-        "Ora ti fornisco una porzione di testo HTML. \n"
-        "Correggi solo errori ortografici, accenti sbagliati e problemi di formattazione. "
-        "Non modificare tag HTML o riformulare frasi.\n"
+        "Ora ti fornisco una porzione di testo.\n"
+        "Correggi solo errori ortografici e di battitura, accenti sbagliati e problemi di formattazione se ci sono.\n"
+        "Non riformulare frasi e non aggiungere grassetti o corsivi.\n"
         "Originale:\n"
         f"{chunk}\n"
         f"Corretto:\n"
     )
+    print_start_end(chunk, 1/20)
     resp = ollama.chat(model=MODEL_NAME, messages=[{"role": "user", "content": prompt}])
-    return resp["message"]["content"].strip()
+    message = resp["message"]["content"].strip()
+    print_start_end(message, 1/20)
+    return message
 
-def compare_overlap(a_tokens, b_tokens) -> float:
-    length = min(len(a_tokens), len(b_tokens))
-    if length == 0:
-        return 1.0
-    mism = sum(
-        1 for x, y in zip(a_tokens[:length], b_tokens[:length])
-        if x.strip() != y.strip()
-    )
-    return mism / length
+def find_similarity(last_overlap, corrected_segmented):
+    best_similarity = 0
+    best_old_start_index = 0
+    best_start_index = 0
+    best_end_index = 0
+    for old_start_index in range(len(last_overlap)): 
+        s1 = " ".join([s.text for s in last_overlap[old_start_index:]])
+        for start_index in range(len(corrected_segmented)): 
+            for end_index in range(start_index, len(corrected_segmented)):
+                s2 = " ".join([s.text for s in corrected_segmented[start_index:end_index]])
+                similarity = difflib.SequenceMatcher(None, s1, s2).ratio()
+                if best_similarity < similarity:
+                    best_similarity = similarity
+                    best_old_start_index = old_start_index
+                    best_start_index = start_index
+                    best_end_index = end_index
+    return best_similarity, best_old_start_index, best_start_index, best_end_index
 
 def correct_file(input_path: str, output_path: str):
     if not os.path.isfile(input_path):
@@ -101,50 +103,67 @@ def correct_file(input_path: str, output_path: str):
 
     with open(input_path, "r", encoding="utf-8") as f:
         full_text = f.read()
+        
+    if os.path.exists(output_path):
+        os.remove(output_path)
 
-    chunks, ranges = split_with_overlap(full_text, CHUNK_WORD_LIMIT, OVERLAP_PERCENT)
-    corrected_chunks, kept_slices = [], []
+    paragraphs = full_text.split('\n')
+    paragraphs = chunk_sentences(paragraphs, CHUNK_CHARS_LIMIT, OVERLAP_PERCENT)
+    max_overlap_size = CHUNK_CHARS_LIMIT * OVERLAP_PERCENT / 100
 
-    # Passaggio 1: correzione e append immediato (senza newline extra)
-    for idx, (chunk, (s, e)) in enumerate(zip(chunks, ranges), 1):
-        print(f"📝 Correcting chunk {idx}/{len(chunks)} …")
-        try:
-            corrected = correct_chunk_with_ollama(chunk)
-        except Exception as err:
-            print(f"   ⚠️  Error: {err} — using original")
-            corrected = chunk
+    last_overlap = []
+    last_segment_end_index = 0
+    # Passaggio 1: correzione e append immediato
+    for idx, paragraph in enumerate(paragraphs):
+        end_segment_index = 0
+        matching_found = False
+        while(not matching_found):
+            print(f"📝 Correcting chunk {idx}/{len(paragraph)} …")
+            corrected = correct_chunk_with_ollama(paragraph)
+            corrected_segmented = [s for s in nlp(corrected).sents]
 
-        corrected_chunks.append(corrected)
-        tokens = tokenize(corrected)
-        kept   = join(tokens[s:e])
-        kept_slices.append(kept)
+            if len(last_overlap) == 0:
+                matching_found = True
+            else:
+                similarity, old_start_index, start_index, end_index = find_similarity(last_overlap, corrected_segmented)
+                print(f"🧬 Best similarity [{old_start_index}:{len(corrected_segmented)}-1]/{len(corrected_segmented)} [{start_index}:{end_index}]/{len(corrected_segmented)} : {similarity}\n")
+                if similarity >= 1 - MISMATCH_THRESHOLD:
+                    print(f"✅ Similarity accepted\n")
+                    _, _, _, end_segment_index = find_similarity(last_overlap[:last_segment_end_index], corrected_segmented)
+                    end_segment_index += 1
+                    matching_found = True
+                
+                if not matching_found:
+                    print(f"🧪 Similarity not found\n")
+                    print_start_end(" ".join([s.text for s in last_overlap]), 1/10)
+                    print("\nvs\n")
+                    print_start_end(" ".join([s.text for s in corrected_segmented]), 1/10)
+                    print("\n")
+                
+            for i, element in enumerate(corrected_segmented):
+                last_segment_end_index = i
+                if element.end_char > CHUNK_CHARS_LIMIT - (max_overlap_size / 2):
+                    break
 
+
+        # Passaggio 3: riscrittura finale senza separatori aggiuntivi
         with open(output_path, "a", encoding="utf-8") as out:
-            out.write(kept)                 # <── niente "\n\n"
-
-    # Passaggio 2: verifica overlap e rigenera se >1 %
-    overlap_len = max(1, round(CHUNK_WORD_LIMIT * OVERLAP_PERCENT / 100))
-    for i in range(1, len(corrected_chunks)):
-        end_prev   = tokenize(corrected_chunks[i - 1])[-overlap_len:]
-        start_curr = tokenize(corrected_chunks[i])[:overlap_len]
-        mismatch   = compare_overlap(end_prev, start_curr)
-
-        if mismatch > MISMATCH_THRESHOLD:
-            print(f"🔄  Mismatch {mismatch:.2%} fra chunk {i} e {i+1} — rigenero …")
-            for j in (i - 1, i):
-                try:
-                    regen = correct_chunk_with_ollama(chunks[j])
-                    corrected_chunks[j] = regen
-                    s, e = ranges[j]
-                    kept_slices[j] = join(tokenize(regen)[s:e])
-                except Exception as err:
-                    print(f"   ⚠️  Regen error on chunk {j+1}: {err}")
-
-    # Passaggio 3: riscrittura finale senza separatori aggiuntivi
-    print("\n💾 Rewriting final output …")
-    with open(output_path, "w", encoding="utf-8") as out:
-        out.write(''.join(kept_slices))      # <── concatenazione pura
-    print(f"✅ Done! Output in: {output_path}")
+            if end_segment_index == 0:
+                start_write_char = corrected_segmented[end_segment_index].start_char
+            else:
+                start_write_char = corrected_segmented[end_segment_index - 1].end_char
+            if last_segment_end_index == len(corrected_segmented) -1:
+                end_write_char = corrected_segmented[last_segment_end_index].end_char
+            else:
+                end_write_char = corrected_segmented[last_segment_end_index + 1].start_char
+            out.write(corrected[start_write_char:end_write_char])
+        print(f"✅ Done! Output in: {output_path}")
+            
+        for i in reversed(range(len(corrected_segmented))):
+            if corrected_segmented[-1].end_char - corrected_segmented[i].start_char + 1 > max_overlap_size:
+                last_overlap = corrected_segmented[i:]
+                last_segment_end_index -= i
+                break
 
 # ─── CLI ─────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
