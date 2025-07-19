@@ -45,8 +45,10 @@ def split_with_overlap(text, total_words, overlap_pct):
 def correct_chunk_with_ollama(chunk: str) -> str:
     prompt = (
         "Correggi solo errori ortografici, accenti sbagliati e problemi di formattazione. "
-        "Non modificare stile, tono o riformulare frasi.\n\n"
-        f"{chunk}"
+        "Non modificare tag HTML o riformulare frasi.\n"
+        "Originale:\n"
+        f"{chunk}\n"
+        f"Corretto:\n"
     )
     resp = ollama.chat(model=MODEL_NAME, messages=[{"role": "user", "content": prompt}])
     return resp["message"]["content"].strip()
