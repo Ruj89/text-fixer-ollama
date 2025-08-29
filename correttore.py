@@ -2,6 +2,7 @@
 import os
 import sys
 import difflib
+import shutil
 
 import ollama
 import spacy
@@ -17,6 +18,14 @@ MISMATCH_THRESHOLD = 0.03           # Threshold for text similarity mismatch
 # Set up a blank multilingual SpaCy model with sentence segmentation
 nlp = spacy.blank("xx")
 nlp.add_pipe("sentencizer")
+
+def backup_file(src_path, step):
+    folder_file = os.path.dirname(src_path)
+    name_file = os.path.basename(src_path)
+    name, est = os.path.splitext(name_file)
+    new_name = f"{step}_{name}{est}"
+    dest_path = os.path.join(folder_file, new_name)
+    shutil.copy2(src_path, dest_path)
 
 # Truncates the output file from the given index onward
 def truncate_file(path: str, cutoff_index: int):
@@ -105,6 +114,7 @@ def find_similarity(last_overlap, corrected_segmented):
 
 # Main processing logic for correcting the full file
 def correct_file(input_path: str, output_path: str):
+    step=0
     if not os.path.isfile(input_path):
         print(f"❌ File '{input_path}' not found.")
         return
@@ -162,6 +172,8 @@ def correct_file(input_path: str, output_path: str):
                     if similarity_retry >= 3:
                         # If similarity match fails too many times, go back one chunk
                         print("❌ Similarity retied too many times, reverting to the chunk before.")
+                        backup_file(output_path, step)
+                        step += 1
                         idx -= 1
                         if idx > 0:
                             truncate_file(output_path, paragraph_file_position_last_char[idx - 1])
@@ -182,6 +194,8 @@ def correct_file(input_path: str, output_path: str):
                     end_write_char = corrected_segmented[last_segment_end_index[idx] + 1].start_char
 
                 writing_segment = corrected[start_write_char:end_write_char]
+                backup_file(output_path, step)
+                step += 1
                 out.write(writing_segment)
                 paragraph_file_position_last_char[idx] = (paragraph_file_position_last_char[idx] if len(paragraph_file_position_last_char)>0 else 0) + len(writing_segment)
             print(f"✅ Done! Output in: {output_path}")
