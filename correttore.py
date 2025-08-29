@@ -11,7 +11,7 @@ import spacy
 CHUNK_CHARS_LIMIT  = 2500           # Max character count for each text chunk
 OUTPUT_PERCENT     = 50             # % of the chunk that will be written to output
 OVERLAP_PERCENT    = (100 - OUTPUT_PERCENT)  # % of overlap between chunks
-MODEL_NAME         = "gemma3n"      # Name of the Ollama model
+MODEL_NAME         = "gemma3:12b"      # Name of the Ollama model
 MISMATCH_THRESHOLD = 0.03           # Threshold for text similarity mismatch
 MAX_OVERLAP_SIZE = CHUNK_CHARS_LIMIT * OVERLAP_PERCENT / 100
 # ─────────────────────────────────────────────────────────────────────────────
