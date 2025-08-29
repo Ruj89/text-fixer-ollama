@@ -1,0 +1,19 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug script",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/correttore.py",
+            "console": "integratedTerminal",
+            "args": [
+                "L:\\Junichiro Tanizaki\\Morbose fantasie (1687)\\Morbose fantasie - Junichiro Tanizaki.txt",
+                "text.txt"
+            ]
+        }
+    ]
+}

@@ -13,6 +13,7 @@ OUTPUT_PERCENT     = 50             # % of the chunk that will be written to out
 OVERLAP_PERCENT    = (100 - OUTPUT_PERCENT)  # % of overlap between chunks
 MODEL_NAME         = "gemma3n"      # Name of the Ollama model
 MISMATCH_THRESHOLD = 0.03           # Threshold for text similarity mismatch
+MAX_OVERLAP_SIZE = CHUNK_CHARS_LIMIT * OVERLAP_PERCENT / 100
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Set up a blank multilingual SpaCy model with sentence segmentation
@@ -32,7 +33,7 @@ def truncate_file(path: str, cutoff_index: int):
     with open(path, 'r+', encoding='utf-8') as f:
         content = f.read()
         f.seek(0)
-        f.write(content[:cutoff_index])
+        f.write(content[:-cutoff_index])
         f.truncate()
 
 # Prints the beginning and end of a string to help with debugging
@@ -94,23 +95,23 @@ def correct_chunk_with_ollama(chunk: str) -> str:
     return message
 
 # Compares overlapping segments and finds the best matching similarity index
-def find_similarity(last_overlap, corrected_segmented):
+def find_similarity(sentences1, sentences2):
     best_similarity = 0
-    best_old_start_index = 0
-    best_start_index = 0
-    best_end_index = 0
-    for old_start_index in range(len(last_overlap)): 
-        s1 = " ".join([s.text for s in last_overlap[old_start_index:]])
-        for start_index in range(len(corrected_segmented)): 
-            for end_index in range(start_index, len(corrected_segmented)):
-                s2 = " ".join([s.text for s in corrected_segmented[start_index:end_index]])
+    best_sentences1_start_index = 0
+    best_sentences2_start_index = 0
+    best_sentences2_end_index = 0
+    for sentences1_start_index in range(len(sentences1)): 
+        s1 = " ".join([s.text for s in sentences1[sentences1_start_index:]])
+        for sentences2_start_index in range(len(sentences2)): 
+            for sentences2_end_index in range(sentences2_start_index, len(sentences2)):
+                s2 = " ".join([s.text for s in sentences2[sentences2_start_index:sentences2_end_index]])
                 similarity = difflib.SequenceMatcher(None, s1, s2).ratio()
                 if best_similarity < similarity:
                     best_similarity = similarity
-                    best_old_start_index = old_start_index
-                    best_start_index = start_index
-                    best_end_index = end_index
-    return best_similarity, best_old_start_index, best_start_index, best_end_index
+                    best_sentences1_start_index = sentences1_start_index
+                    best_sentences2_start_index = sentences2_start_index
+                    best_sentences2_end_index = sentences2_end_index
+    return best_similarity, best_sentences1_start_index, best_sentences2_start_index, best_sentences2_end_index
 
 # Main processing logic for correcting the full file
 def correct_file(input_path: str, output_path: str):
@@ -128,46 +129,48 @@ def correct_file(input_path: str, output_path: str):
     # Split text into overlapping paragraphs
     paragraphs = full_text.split('\n')
     paragraphs = chunk_sentences(paragraphs, CHUNK_CHARS_LIMIT, OVERLAP_PERCENT)
-    max_overlap_size = CHUNK_CHARS_LIMIT * OVERLAP_PERCENT / 100
 
     # Data structures to track chunk progress and positions
-    last_overlap = [None] * len(paragraphs)
-    paragraph_file_position_last_char = [0] * len(paragraphs)
-    last_segment_end_index = [0] * len(paragraphs)
+    iteration_data = [{
+        "paragraph": paragraph,
+        "corrected_segmented": [],
+        "tail_overlap_index_start": 0, 
+        "written_indexes": {"start" : 0, "end": 0},
+    } for paragraph in paragraphs]
 
     idx = 0
-    while idx < len(paragraphs):
-        paragraph = paragraphs[idx]
-        end_segment_index = 0
+    while idx < len(iteration_data):
         matching_found = False
         similarity_retry = 0
 
         while(not matching_found):
             print(f"📝 Correcting chunk {idx}/{len(paragraphs)} …")
-            corrected = correct_chunk_with_ollama(paragraph)
-            corrected_segmented = [s for s in nlp(corrected).sents]
+            corrected = correct_chunk_with_ollama(iteration_data[idx]["paragraph"])
+            iteration_data[idx]["corrected_segmented"] = [s for s in nlp(corrected).sents]
 
             if idx == 0:
                 # First chunk does not need overlap matching
                 matching_found = True
             else:
-                similarity, old_start_index, start_index, end_index = find_similarity(last_overlap[idx-1], corrected_segmented)
-                print(f"🧬 Best similarity [{old_start_index}:{len(corrected_segmented)}-1]/{len(corrected_segmented)} [{start_index}:{end_index}]/{len(corrected_segmented)} : {similarity}\n")
+                last_overlap = iteration_data[idx - 1]["corrected_segmented"][iteration_data[idx - 1]["tail_overlap_index_start"]:]
+                similarity, old_start_index, start_index, end_index = find_similarity(last_overlap, iteration_data[idx]["corrected_segmented"])
+                print(f"🧬 Best similarity [{old_start_index}:{len(iteration_data[idx]["corrected_segmented"])}-1]/{len(iteration_data[idx]["corrected_segmented"])} [{start_index}:{end_index}]/{len(iteration_data[idx]["corrected_segmented"])} : {similarity}\n")
                 if similarity >= 1 - MISMATCH_THRESHOLD:
                     print(f"✅ Similarity accepted\n")
-                    _, _, _, end_segment_index = find_similarity(last_overlap[idx-1][:last_segment_end_index[idx-1]], corrected_segmented)
-                    end_segment_index += 1
+                    last_written_overlap = iteration_data[idx - 1]["corrected_segmented"][iteration_data[idx - 1]["tail_overlap_index_start"]:iteration_data[idx - 1]["written_indexes"]["end"]]
+                    _, _, _, iteration_data[idx]["written_indexes"]["start"] = find_similarity(last_written_overlap, iteration_data[idx]["corrected_segmented"])
+                    iteration_data[idx]["written_indexes"]["start"] += 1
                     matching_found = True
                 
                 if not matching_found:
                     similarity_retry += 1
                     print(f"🧪 Similarity not found, best chance:")
                     print("─────────────────────────────────────────────────────────────────────")
-                    print(" ".join([s.text for s in last_overlap[idx-1]]))
+                    print(" ".join([s.text for s in last_overlap]))
                     print("─────────────────────────────────────────────────────────────────────")
                     print("\nvs\n")
                     print("─────────────────────────────────────────────────────────────────────")
-                    print(" ".join([s.text for s in corrected_segmented]))
+                    print(" ".join([s.text for s in iteration_data[idx]["corrected_segmented"]]))
                     print("─────────────────────────────────────────────────────────────────────")
                     if similarity_retry >= 3:
                         # If similarity match fails too many times, go back one chunk
@@ -176,36 +179,47 @@ def correct_file(input_path: str, output_path: str):
                         step += 1
                         idx -= 1
                         if idx > 0:
-                            truncate_file(output_path, paragraph_file_position_last_char[idx - 1])
+                            start_write_char = iteration_data[idx]["corrected_segmented"][iteration_data[idx]["written_indexes"]["start"]].start_char
+                            if idx > 0:
+                                start_write_char -= 1
+                            end_write_char = iteration_data[idx]["corrected_segmented"][iteration_data[idx]["written_indexes"]["end"]].end_char
+                            truncate_file(output_path, end_write_char - start_write_char)
                         else:
                             os.remove(output_path)
                         break 
 
         if matching_found:
+            # Save overlap for the next chunk
+            i = 0
+            for i in reversed(range(len(iteration_data[idx]["corrected_segmented"]))):
+                if iteration_data[idx]["corrected_segmented"][-1].end_char - iteration_data[idx]["corrected_segmented"][i].start_char + 1 <= MAX_OVERLAP_SIZE:    
+                    iteration_data[idx]["tail_overlap_index_start"] = i
+                else:
+                    break
+            
+            if idx < len(iteration_data) - 1:
+                overlap_sentences_count = len(iteration_data[idx]["corrected_segmented"]) - iteration_data[idx]["tail_overlap_index_start"]
+                iteration_data[idx]["written_indexes"]["end"] = iteration_data[idx]["tail_overlap_index_start"] + round(overlap_sentences_count/2)
+            else:
+                iteration_data[idx]["written_indexes"]["end"] = len(iteration_data[idx]["corrected_segmented"]) - 1
+
+                
+            start_write_char = iteration_data[idx]["corrected_segmented"][iteration_data[idx]["written_indexes"]["start"]].start_char
+            if iteration_data[idx]["written_indexes"]["start"] > 0:
+                start_write_char -= 1
+            end_write_char = iteration_data[idx]["corrected_segmented"][iteration_data[idx]["written_indexes"]["end"]].end_char
+            writing_segment = corrected[start_write_char:end_write_char]
+
+            if idx > 0:
+                backup_file(output_path, step)
+            step += 1
+
+
             # Write corrected chunk to output file
             with open(output_path, "a", encoding="utf-8") as out:
-                if end_segment_index == 0:
-                    start_write_char = corrected_segmented[end_segment_index].start_char
-                else:
-                    start_write_char = corrected_segmented[end_segment_index - 1].end_char
-                if last_segment_end_index[idx] == len(corrected_segmented) - 1:
-                    end_write_char = corrected_segmented[last_segment_end_index[idx]].end_char
-                else:
-                    end_write_char = corrected_segmented[last_segment_end_index[idx] + 1].start_char
-
-                writing_segment = corrected[start_write_char:end_write_char]
-                backup_file(output_path, step)
-                step += 1
                 out.write(writing_segment)
-                paragraph_file_position_last_char[idx] = (paragraph_file_position_last_char[idx] if len(paragraph_file_position_last_char)>0 else 0) + len(writing_segment)
             print(f"✅ Done! Output in: {output_path}")
                 
-            # Save overlap for the next chunk
-            for i in reversed(range(len(corrected_segmented))):
-                if corrected_segmented[-1].end_char - corrected_segmented[i].start_char + 1 > max_overlap_size:
-                    last_overlap[idx] = corrected_segmented[i:]
-                    last_segment_end_index[idx] -= i
-                    break
 
             idx += 1
 
