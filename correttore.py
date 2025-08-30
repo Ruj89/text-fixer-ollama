@@ -11,9 +11,10 @@ import spacy
 CHUNK_CHARS_LIMIT  = 2500           # Max character count for each text chunk
 OUTPUT_PERCENT     = 50             # % of the chunk that will be written to output
 OVERLAP_PERCENT    = (100 - OUTPUT_PERCENT)  # % of overlap between chunks
-MODEL_NAME         = "gemma3:12b"      # Name of the Ollama model
-MISMATCH_THRESHOLD = 0.03           # Threshold for text similarity mismatch
+MODEL_NAME         = "gemma3n:latest"      # Name of the Ollama model
+MISMATCH_THRESHOLD = 0.02           # Threshold for text similarity mismatch
 MAX_OVERLAP_SIZE = CHUNK_CHARS_LIMIT * OVERLAP_PERCENT / 100
+MAX_SIMILARITY_RETRIES = 3
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Set up a blank multilingual SpaCy model with sentence segmentation
@@ -142,6 +143,7 @@ def correct_file(input_path: str, output_path: str):
     while idx < len(iteration_data):
         matching_found = False
         similarity_retry = 0
+        shorten_overlap_count = 0
 
         while(not matching_found):
             print(f"📝 Correcting chunk {idx}/{len(paragraphs)} …")
@@ -152,7 +154,7 @@ def correct_file(input_path: str, output_path: str):
                 # First chunk does not need overlap matching
                 matching_found = True
             else:
-                last_overlap = iteration_data[idx - 1]["corrected_segmented"][iteration_data[idx - 1]["tail_overlap_index_start"]:]
+                last_overlap = iteration_data[idx - 1]["corrected_segmented"][iteration_data[idx - 1]["tail_overlap_index_start"]:len(iteration_data[idx - 1]["corrected_segmented"])-shorten_overlap_count]
                 similarity, old_start_index, start_index, end_index = find_similarity(last_overlap, iteration_data[idx]["corrected_segmented"])
                 print(f"🧬 Best similarity [{old_start_index}:{len(iteration_data[idx]["corrected_segmented"])}-1]/{len(iteration_data[idx]["corrected_segmented"])} [{start_index}:{end_index}]/{len(iteration_data[idx]["corrected_segmented"])} : {similarity}\n")
                 if similarity >= 1 - MISMATCH_THRESHOLD:
@@ -166,27 +168,34 @@ def correct_file(input_path: str, output_path: str):
                     similarity_retry += 1
                     print(f"🧪 Similarity not found, best chance:")
                     print("─────────────────────────────────────────────────────────────────────")
-                    print(" ".join([s.text for s in last_overlap]))
+                    print(" ".join([s.text for s in last_overlap[old_start_index:]]))
                     print("─────────────────────────────────────────────────────────────────────")
                     print("\nvs\n")
                     print("─────────────────────────────────────────────────────────────────────")
-                    print(" ".join([s.text for s in iteration_data[idx]["corrected_segmented"]]))
+                    print(" ".join([s.text for s in iteration_data[idx]["corrected_segmented"][start_index:end_index]]))
                     print("─────────────────────────────────────────────────────────────────────")
-                    if similarity_retry >= 3:
-                        # If similarity match fails too many times, go back one chunk
-                        print("❌ Similarity retied too many times, reverting to the chunk before.")
-                        backup_file(output_path, step)
-                        step += 1
-                        idx -= 1
-                        if idx > 0:
-                            start_write_char = iteration_data[idx]["corrected_segmented"][iteration_data[idx]["written_indexes"]["start"]].start_char
-                            if idx > 0:
-                                start_write_char -= 1
-                            end_write_char = iteration_data[idx]["corrected_segmented"][iteration_data[idx]["written_indexes"]["end"]].end_char
-                            truncate_file(output_path, end_write_char - start_write_char)
+                    if similarity_retry >= MAX_SIMILARITY_RETRIES:
+                        if shorten_overlap_count < 3:
+                            print("⚠️ Reducing overlap.")
+                            # TODO: Fix shorten overlap truncating
+                            shorten_overlap_count += 1
+                            similarity_retry = 0
                         else:
-                            os.remove(output_path)
-                        break 
+                            # If similarity match fails too many times, go back one chunk
+                            print("❌ Similarity retied too many times, reverting to the chunk before.")
+                            backup_file(output_path, step)
+                            step += 1
+                            idx -= 1
+                            shorten_overlap_count = 0
+                            if idx > 0:
+                                start_write_char = iteration_data[idx]["corrected_segmented"][iteration_data[idx]["written_indexes"]["start"]].start_char
+                                if idx > 0:
+                                    start_write_char -= 1
+                                end_write_char = iteration_data[idx]["corrected_segmented"][iteration_data[idx]["written_indexes"]["end"]].end_char
+                                truncate_file(output_path, end_write_char - start_write_char)
+                            else:
+                                os.remove(output_path)
+                            break 
 
         if matching_found:
             # Save overlap for the next chunk
