@@ -175,9 +175,8 @@ def correct_file(input_path: str, output_path: str):
                     print(" ".join([s.text for s in iteration_data[idx]["corrected_segmented"][start_index:end_index]]))
                     print("─────────────────────────────────────────────────────────────────────")
                     if similarity_retry >= MAX_SIMILARITY_RETRIES:
-                        if shorten_overlap_count < 3:
+                        if shorten_overlap_count + 1 < len(iteration_data[idx - 1]["corrected_segmented"]) - iteration_data[idx - 1]["written_indexes"]["end"]:
                             print("⚠️ Reducing overlap.")
-                            # TODO: Fix shorten overlap truncating
                             shorten_overlap_count += 1
                             similarity_retry = 0
                         else:
