@@ -235,7 +235,7 @@ def correct_file(input_path: str, output_path: str):
 # ─── Command Line Interface ───────────────────────────────────────────────────
 if __name__ == "__main__":
     if len(sys.argv) != 3:
-        print("Usage: python correttore.py input.txt output.txt")
+        print("Usage: python fixer.py input.txt output.txt")
     else:
         if os.path.exists(sys.argv[2]):
             os.remove(sys.argv[2])

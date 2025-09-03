@@ -1,4 +1,4 @@
-# correttore.py
+# Text Fixer Ollama
 
 *A chunk-based spelling & formatting corrector powered by Ollama*
 
@@ -45,7 +45,7 @@ ollama serve             # starts the local Ollama daemon (if not already runnin
 ollama pull gemma3n       # download the default model
 
 # Correct a file
-python correttore.py input.txt output.txt
+python fixer.py input.txt output.txt
 ```
 
 <a id="installation"></a>
@@ -88,23 +88,23 @@ python correttore.py input.txt output.txt
    ollama pull gemma3n
    ```
 
-   > **Tip:** You can change the model by editing the `MODEL_NAME` constant in *correttore.py*.
+   > **Tip:** You can change the model by editing the `MODEL_NAME` constant in *fixer.py*.
 
 <a id="usage"></a>
 
 ## Usage
 
 ```bash
-python correttore.py <input_file> <output_file>
+python fixer.py <input_file> <output_file>
 ```
 
 Examples:
 
 ```bash
-# Correct a plain-text novel\python correttore.py war_and_peace.txt war_and_peace_fixed.txt
+# Correct a plain-text novel\python fixer.py war_and_peace.txt war_and_peace_fixed.txt
 
 # Overwrite the original (⚠️ irreversible!)
-python correttore.py draft.md draft.md
+python fixer.py draft.md draft.md
 ```
 
 Upon completion you will see progress messages like:
@@ -118,7 +118,7 @@ Upon completion you will see progress messages like:
 
 ## Configuration
 
-Tweak the top-level constants in *correttore.py* to fit your project:
+Tweak the top-level constants in *fixer.py* to fit your project:
 
 | Constant             | Purpose                                          | Default     |
 | -------------------- | ------------------------------------------------ | ----------- |

@@ -8,7 +8,7 @@
             "name": "Debug script",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/correttore.py",
+            "program": "${workspaceFolder}/fixer.py",
             "console": "integratedTerminal",
             "args": [
                 "L:\\Junichiro Tanizaki\\Morbose fantasie (1687)\\Morbose fantasie - Junichiro Tanizaki.txt",
