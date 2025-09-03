@@ -29,9 +29,9 @@
 ## Quick Start
 
 ```bash
-# Clone the repository (replace with your own path)
-git clone https://github.com/your-user/correttore.git
-cd correttore
+# Clone the repository
+git clone https://github.com/Ruj89/text-fixer-ollama
+cd text-fixer-ollama
 
 # Create and activate a virtual environment
 python3 -m venv .venv
@@ -74,8 +74,8 @@ python correttore.py input.txt output.txt
    *`requirements.txt`*
 
    ```text
-   ollama>=0.1.4
-   spacy>=3.7.0
+   ollama>=0.5.1
+   spacy>=3.8.7
    ```
 
 4. **Download (or change) the model**

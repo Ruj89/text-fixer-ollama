@@ -10,11 +10,12 @@ import spacy
 # ─── Parameters ─────────────────────────────────────────────────────────────
 CHUNK_CHARS_LIMIT  = 2500           # Max character count for each text chunk
 OUTPUT_PERCENT     = 50             # % of the chunk that will be written to output
-OVERLAP_PERCENT    = (100 - OUTPUT_PERCENT)  # % of overlap between chunks
 MODEL_NAME         = "gemma3n:latest"      # Name of the Ollama model
 MISMATCH_THRESHOLD = 0.02           # Threshold for text similarity mismatch
-MAX_OVERLAP_SIZE = CHUNK_CHARS_LIMIT * OVERLAP_PERCENT / 100
-MAX_SIMILARITY_RETRIES = 3
+# ─────────────────────────────────────────────────────────────────────────────
+OVERLAP_PERCENT    = (100 - OUTPUT_PERCENT)  # % of overlap between chunks
+MAX_OVERLAP_SIZE = CHUNK_CHARS_LIMIT * OVERLAP_PERCENT / 100 # Size of overlap in characters
+MAX_SIMILARITY_RETRIES = 3 # Number of retries before discarding invalid chunks elaborations
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Set up a blank multilingual SpaCy model with sentence segmentation

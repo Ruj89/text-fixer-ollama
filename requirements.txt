@@ -1,2 +1,2 @@
-ollama
-spacy
+ollama>=0.5.1
+spacy>=3.8.7
